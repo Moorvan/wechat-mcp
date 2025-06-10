@@ -16,10 +16,10 @@ Work-In-Progress Documentation
 {
     "mcpServers": {
         "wechat": {
-            "command": "uv", // 或者输入 `uv` 所在的绝对路径
+            "command": "uv",
             "args": [
                 "--directory",
-                "<path-to-wechat-agent>", // 该 git repo 的绝对路径 
+                "/Users/bytedance/Developer/llm-tools/wechat-mcp",
                 "run",
                 "-m",
                 "src.mcp"

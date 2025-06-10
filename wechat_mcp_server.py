@@ -1,7 +1,9 @@
+from mcp.server.fastmcp import FastMCP
 from rich import print
 import asyncio
-from .lib import get_chat_logs, get_contacts, send_message
-from mcp.server.fastmcp import FastMCP
+from wechat_client import get_chat_logs, get_contacts, send_message
+import unicodedata
+import urllib.parse # <--- 添加这一行
 
 mcp = FastMCP("WeChat MCP")
 
@@ -36,7 +38,15 @@ def format_message_xml(log, indent_level: int = 1) -> str:
     ])
 
 
-@mcp.resource("allcontacts://all_contacts")
+# Helper function for Unicode normalization and casefolding
+def normalize_caseless(text: str) -> str:
+    """Normalizes and casefolds a string for robust comparison."""
+    # NFKC performs compatibility decomposition, followed by canonical composition.
+    # casefold() is a more aggressive version of lower() for caseless matching.
+    return unicodedata.normalize('NFKC', text).casefold()
+
+
+@mcp.tool()
 def all_contacts() -> str:
     """
     Get a table of all contacts.
@@ -49,14 +59,36 @@ def all_contacts() -> str:
     ])
 
 
-@mcp.resource("contact://{name}")
+@mcp.tool()
 def contact(name: str) -> str:
     """
     Get a table of contacts that match the given name.
-    """ 
+    """
+    # Explicitly URL-decode the name parameter
+    decoded_name = urllib.parse.unquote(name) # <--- 添加解码步骤
+
+    # We normalize and casefold for robust Unicode-aware searching.
     res = get_contacts()
-    filtered_contacts = [c for c in res if 
-        ((c.title or "") + (c.subtitle or "") + c.arg).lower().find(name.lower()) >= 0]
+    
+    # Normalize the search name, handle if name is None or empty
+    normalized_search_name = normalize_caseless(decoded_name or "") # <--- 使用解码后的名字
+    # print(f"Decoded name: '{decoded_name}', Normalized search name: '{normalized_search_name}' from input: '{name}'")
+
+    if not normalized_search_name: # If search name is empty, return no contacts
+        return "\n".join([
+            "<contacts>",
+            "</contacts>"
+        ])
+
+    filtered_contacts = []
+    for c in res:
+        # Concatenate relevant contact fields for searching, ensuring parts are strings
+        contact_full_string = (c.title or "") + (c.subtitle or "") + (c.arg or "")
+        normalized_contact_string = normalize_caseless(contact_full_string)
+        
+        if normalized_contact_string.find(normalized_search_name) >= 0:
+            filtered_contacts.append(c)
+            
     return "\n".join([
         "<contacts>",
         *[format_contact_xml(contact) for contact in filtered_contacts],

@@ -1,4 +1,3 @@
-# Library for interacting with WeChat API
 from httpx import AsyncClient
 import httpx
 from pydantic import BaseModel
