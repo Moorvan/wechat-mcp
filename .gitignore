@@ -35,3 +35,4 @@ htmlcov/
 # Dependency management
 .uv/
 local
+.logs

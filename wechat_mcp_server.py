@@ -1,9 +1,9 @@
 from mcp.server.fastmcp import FastMCP
 from rich import print
 import asyncio
-from wechat_client import get_chat_logs, get_contacts, send_message
+from wechat_client import client # Import the client instance
 import unicodedata
-import urllib.parse # <--- 添加这一行
+import urllib.parse
 
 mcp = FastMCP("WeChat MCP")
 
@@ -51,35 +51,19 @@ def contact(name: str) -> str:
     """
     获取匹配指定名称的联系人列表。
     """
-    # Explicitly URL-decode the name parameter
-    decoded_name = urllib.parse.unquote(name) # <--- 添加解码步骤
+    decoded_name = urllib.parse.unquote(name)
+    normalized_search_name = normalize_caseless(decoded_name or "")
 
-    # We normalize and casefold for robust Unicode-aware searching.
-    res = get_contacts()
-    
-    # Normalize the search name, handle if name is None or empty
-    normalized_search_name = normalize_caseless(decoded_name or "") # <--- 使用解码后的名字
-    # print(f"Decoded name: '{decoded_name}', Normalized search name: '{normalized_search_name}' from input: '{name}'")
+    if not normalized_search_name:
+        res = []
+    else:
+        res = client.search_contacts(keyword=decoded_name)
 
-    if not normalized_search_name: # If search name is empty, return no contacts
-        return "\n".join([
-            "<contacts>",
-            "</contacts>"
-        ])
-
-    filtered_contacts = []
-    for c in res:
-        # Concatenate relevant contact fields for searching, ensuring parts are strings
-        contact_full_string = f"{c.title or ''} {c.subtitle or ''} {c.arg or ''}"
-        # contact_full_string = (c.title or "") + (c.subtitle or "") + (c.arg or "")
-        normalized_contact_string = normalize_caseless(contact_full_string)
-        
-        if normalized_contact_string.find(normalized_search_name) >= 0:
-            filtered_contacts.append(c)
+    res_to_format = res
             
     return "\n".join([
         "<contacts>",
-        *[format_contact_xml(contact) for contact in filtered_contacts],
+        *[format_contact_xml(contact) for contact in res_to_format],
         "</contacts>"
     ])
 
@@ -89,7 +73,7 @@ def chat_logs(user_id: str, count: int = 10) -> str:
     获取指定用户的聊天记录。返回的聊天记录内容以及后续基于这些内容的分析和输出都应为中文。
     调用此方法时，请确保使用用户 ID，而不是名称、标题或子标题。
     """
-    res = get_chat_logs(user_id, count)
+    res = client.get_chat_logs(user_id, count) # Use client.get_chat_logs
     return "\n".join([
         "<chat_logs>",
         *[format_message_xml(log) for log in res.chatLogs],
@@ -102,9 +86,10 @@ def send(user_id: str, message: str):
     向微信用户发送消息。发送的消息内容应为中文。
     调用此方法时，请确保使用用户 ID，而不是名称、标题或子标题。
     """
-    res = send_message(user_id, message)
+    res = client.send_message(user_id, message) # Use client.send_message
     return res
 
 
 if __name__ == "__main__":
     mcp.run("stdio")
+
