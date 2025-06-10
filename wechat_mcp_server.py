@@ -47,22 +47,9 @@ def normalize_caseless(text: str) -> str:
 
 
 @mcp.tool()
-def all_contacts() -> str:
-    """
-    Get a table of all contacts.
-    """
-    res = get_contacts()
-    return "\n".join([
-        "<contacts>",
-        *[format_contact_xml(contact) for contact in res],
-        "</contacts>"
-    ])
-
-
-@mcp.tool()
 def contact(name: str) -> str:
     """
-    Get a table of contacts that match the given name.
+    获取匹配指定名称的联系人列表。
     """
     # Explicitly URL-decode the name parameter
     decoded_name = urllib.parse.unquote(name) # <--- 添加解码步骤
@@ -83,7 +70,8 @@ def contact(name: str) -> str:
     filtered_contacts = []
     for c in res:
         # Concatenate relevant contact fields for searching, ensuring parts are strings
-        contact_full_string = (c.title or "") + (c.subtitle or "") + (c.arg or "")
+        contact_full_string = f"{c.title or ''} {c.subtitle or ''} {c.arg or ''}"
+        # contact_full_string = (c.title or "") + (c.subtitle or "") + (c.arg or "")
         normalized_contact_string = normalize_caseless(contact_full_string)
         
         if normalized_contact_string.find(normalized_search_name) >= 0:
@@ -98,8 +86,8 @@ def contact(name: str) -> str:
 @mcp.tool()
 def chat_logs(user_id: str, count: int = 10) -> str:
     """
-    Get a table of chat logs for the given user.
-    When calling this method, remember to use the user id and not the name, title, or subtitle.
+    获取指定用户的聊天记录。返回的聊天记录内容以及后续基于这些内容的分析和输出都应为中文。
+    调用此方法时，请确保使用用户 ID，而不是名称、标题或子标题。
     """
     res = get_chat_logs(user_id, count)
     return "\n".join([
@@ -111,11 +99,12 @@ def chat_logs(user_id: str, count: int = 10) -> str:
 @mcp.tool()
 def send(user_id: str, message: str):
     """
-    Send a message to a WeChat user.
-    When calling this method, remember to use the user id and not the name, title, or subtitle.
+    向微信用户发送消息。发送的消息内容应为中文。
+    调用此方法时，请确保使用用户 ID，而不是名称、标题或子标题。
     """
     res = send_message(user_id, message)
     return res
+
 
 if __name__ == "__main__":
     mcp.run("stdio")
