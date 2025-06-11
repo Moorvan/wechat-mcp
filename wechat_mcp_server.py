@@ -8,6 +8,32 @@ from datetime import datetime
 
 mcp = FastMCP("WeChat MCP")
 
+# Contact cache
+contact_cache = {}
+
+async def get_contact_name_with_cache(wxid: str) -> str:
+    """Gets contact name from cache or fetches and caches it."""
+    if wxid in contact_cache:
+        return contact_cache[wxid]
+    
+    # wxid_ 开头的通常是个人用户，直接查询
+    # 非 wxid_ 开头的可能是群聊，也可能是其他类型的id，尝试查询
+    # 如果查询不到，或者wxid本身就是显示名称（例如某些系统消息），则返回原始wxid
+    if not wxid: # Handle empty wxid if necessary
+        return "Unknown"
+        
+    try:
+        contacts = await client.search_contacts_async(keyword=wxid)
+        if contacts:
+            contact_name = contacts[0].title
+            contact_cache[wxid] = contact_name
+            return contact_name
+    except Exception as e:
+        print(f"Error fetching contact for {wxid}: {e}")
+    
+    # Fallback to original wxid if not found or error
+    contact_cache[wxid] = wxid # Cache the wxid itself to avoid repeated failed lookups
+    return wxid
 
 def format_xml_element(tag: str, content: str, indent_level: int = 0) -> str:
     indent = "  " * indent_level
@@ -26,7 +52,7 @@ def format_contact_xml(contact, indent_level: int = 1) -> str:
     ])
 
 
-def format_message_xml(log, indent_level: int = 1) -> str:
+async def format_message_xml(log, indent_level: int = 1) -> str:
     indent = "  " * indent_level
 
     # Convert timestamp to readable format
@@ -35,56 +61,41 @@ def format_message_xml(log, indent_level: int = 1) -> str:
     except ValueError:
         readable_time = log.createTime # Fallback to original if conversion fails
 
-    # Get contact names for fromUser and toUser
-    from_user_name = log.fromUser
-    to_user_name = log.toUser
-    actual_sender_id_in_content = None
     content_to_display = log.content
+    from_user_display_name = log.fromUser # Default to original wxid
 
-    # Check if it's a group message and extract actual sender if possible
-    if not log.fromUser.startswith("wxid_") and "wxid_" in log.content:
+    # Handle group messages and actual sender
+    if not log.fromUser.startswith("wxid_") and "wxid_" in log.content: # Likely a group chat
+        group_name = await get_contact_name_with_cache(log.fromUser)
         try:
-            # Extract the wxid from the content (e.g., "wxid_xxxx: message content")
             parts = log.content.split(":", 1)
-            if len(parts) > 1 and "wxid_" in parts[0]:
-                actual_sender_id_in_content = parts[0].strip()
-                # Attempt to get the actual sender's name
-                sender_contacts = client.search_contacts(keyword=actual_sender_id_in_content)
-                if sender_contacts:
-                    from_user_name = sender_contacts[0].title # Use actual sender's name
-                    content_to_display = parts[1].strip() if len(parts) > 1 else log.content # Remove wxid from content
-                else:
-                    # If actual sender not found by wxid, keep group name but note the wxid
-                    from_user_name = f"{log.fromUser} ({actual_sender_id_in_content})"
-                    # Optionally, still remove the prefix if it's clearly a prefix
-                    content_to_display = parts[1].strip() if len(parts) > 1 else log.content
-            # If wxid is not at the beginning, don't change from_user_name for now
-            # and rely on the general fromUser lookup below.
+            if len(parts) > 1 and parts[0].strip().startswith("wxid_"):
+                actual_sender_id = parts[0].strip()
+                actual_sender_name = await get_contact_name_with_cache(actual_sender_id)
+                
+                if actual_sender_name != actual_sender_id: # Successfully resolved actual sender's name
+                    from_user_display_name = actual_sender_name
+                    content_to_display = parts[1].strip()
+                else: # Couldn't resolve actual sender's name, show group (sender_id)
+                    from_user_display_name = f"{group_name} ({actual_sender_id})"
+                    content_to_display = parts[1].strip() # Still remove prefix
+            else:
+                # No clear wxid_ prefix in content, use group name
+                from_user_display_name = group_name
         except Exception as e:
-            print(f"Error processing group message sender: {e}")
-            # Fallback to group name if an error occurs
-            from_user_name = log.fromUser
+            print(f"Error processing group message sender for {log.fromUser}: {e}")
+            from_user_display_name = await get_contact_name_with_cache(log.fromUser) # Fallback to group name
     else:
-        # For non-group messages or if no actual sender in content, try to resolve fromUser directly
-        try:
-            from_contacts = client.search_contacts(keyword=log.fromUser)
-            if from_contacts:
-                from_user_name = from_contacts[0].title
-        except Exception as e:
-            print(f"Error fetching from_user contact: {e}") # Log error, keep original wxid
+        # Direct message or system message, resolve fromUser
+        from_user_display_name = await get_contact_name_with_cache(log.fromUser)
 
-    # Resolve toUser (recipient)
-    try:
-        to_contacts = client.search_contacts(keyword=log.toUser)
-        if to_contacts:
-            to_user_name = to_contacts[0].title
-    except Exception as e:
-        print(f"Error fetching to_user contact: {e}") # Log error, keep original wxid
+    to_user_display_name = await get_contact_name_with_cache(log.toUser)
+
 
     return "\n".join([
         f"{indent}<message>",
-        format_xml_element("from", from_user_name, indent_level + 1),
-        format_xml_element("to", to_user_name, indent_level + 1),
+        format_xml_element("from", from_user_display_name, indent_level + 1),
+        format_xml_element("to", to_user_display_name, indent_level + 1),
         format_xml_element("content", content_to_display, indent_level + 1),
         format_xml_element("time", readable_time, indent_level + 1),
         format_xml_element("is_self", str(log.isSentFromSelf).lower(), indent_level + 1),
@@ -101,7 +112,7 @@ def normalize_caseless(text: str) -> str:
 
 
 @mcp.tool()
-def contact(name: str) -> str:
+async def contact(name: str) -> str:
     """
     获取匹配指定名称的联系人列表。
     """
@@ -111,7 +122,7 @@ def contact(name: str) -> str:
     if not normalized_search_name:
         res = []
     else:
-        res = client.search_contacts(keyword=decoded_name)
+        res = await client.search_contacts_async(keyword=decoded_name)
 
     res_to_format = res
             
@@ -122,28 +133,28 @@ def contact(name: str) -> str:
     ])
 
 @mcp.tool()
-def chat_logs(user_id: str, count: int = 10) -> str:
+async def chat_logs(user_id: str, count: int = 10) -> str:
     """
     获取指定用户的聊天记录。返回的聊天记录内容以及后续基于这些内容的分析和输出都应为中文。
     调用此方法时，请确保使用用户 ID，而不是名称、标题或子标题。
     """
-    res = client.get_chat_logs(user_id, count) # Use client.get_chat_logs
+    res = await client.get_chat_logs_async(user_id, count) # Use client.get_chat_logs_async
     return "\n".join([
         "<chat_logs>",
-        *[format_message_xml(log) for log in res.chatLogs],
+        *[await format_message_xml(log) for log in res.chatLogs],
         "</chat_logs>"
     ])
 
 @mcp.tool()
-def send(user_id: str, message: str):
+async def send(user_id: str, message: str):
     """
     向微信用户发送消息。发送的消息内容应为中文。
     调用此方法时，请确保使用用户 ID，而不是名称、标题或子标题。
     """
-    res = client.send_message(user_id, message) # Use client.send_message
+    res = await client.send_message_async(user_id, message) # Use client.send_message_async
     return res
+
 
 
 if __name__ == "__main__":
     mcp.run("stdio")
-
